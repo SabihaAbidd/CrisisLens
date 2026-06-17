@@ -103,7 +103,15 @@ def _resolve_authority_hint(location, scene_data, description):
             scene_data.get("scene_description", ""),
         ]
     ).strip()
-    return _resolve_authority(location, scene_data.get("incident_type", "emergency"), signal_text)
+    route_hint = _resolve_authority(location, scene_data.get("incident_type", "emergency"), signal_text)
+    return {
+        "authority_name": route_hint.get("authority"),
+        "authority_phone": route_hint.get("phone"),
+        "city": route_hint.get("city"),
+        "hazard_class": route_hint.get("hazard_class"),
+        "is_generic": route_hint.get("is_generic", True),
+        "routing_result": route_hint.get("routing_result", {}),
+    }
 
 
 def _normalize_scene(scene_data, inferred):
@@ -311,6 +319,39 @@ def _apply_authority_hint(report, authority_hint, location):
     return report
 
 
+def _dispatch_from_authority_hint(authority_hint, report, location):
+    route = authority_hint.get("routing_result") or {}
+    full = report.get("full_report", {})
+    authority_name = authority_hint.get("authority_name") or route.get("primary_authority") or "Local municipal authority"
+    authority_phone = authority_hint.get("authority_phone") or route.get("primary_phone") or route.get("emergency_contact")
+    authority_whatsapp = route.get("primary_whatsapp")
+    whatsapp_number = "".join(ch for ch in str(authority_whatsapp) if ch.isdigit()) if authority_whatsapp else None
+
+    return {
+        "authority_name": authority_name,
+        "authority_phone": authority_phone or "Local helpline",
+        "authority_whatsapp": whatsapp_number,
+        "authority_email": route.get("primary_email"),
+        "whatsapp_link": None,
+        "dispatch_channel": "whatsapp" if whatsapp_number else ("email" if route.get("primary_email") else "call_only"),
+        "search_confidence": int(route.get("routing_confidence", 50 if not authority_hint.get("is_generic") else 35)),
+        "source_found": route.get("routing_reason", "Reused authority lookup from the initial routing step."),
+        "google_search_used": bool(route),
+        "google_search_succeeded": bool(route.get("evidence_sources")),
+        "google_search_queries": route.get("_debug", {}).get("search_queries", [])[:2],
+        "google_search_results_count": route.get("_debug", {}).get("candidates_found_count", 0),
+        "resolved_city": authority_hint.get("city") or route.get("_debug", {}).get("location_context", {}).get("city", "unknown"),
+        "resolved_hazard_class": (
+            authority_hint.get("hazard_class")
+            or route.get("_debug", {}).get("hazard_context", {}).get("issue_type")
+            or full.get("incident_type", "unknown")
+        ),
+        "routing_result": route,
+        "email_sent": False,
+        "email_attempted": False,
+    }
+
+
 def run_pipeline(image_path: str, location: str, description: str = "", audio_path: str = None) -> dict:
     """
     Runs the full CrisisLens emergency response pipeline end-to-end.
@@ -371,8 +412,12 @@ def run_pipeline(image_path: str, location: str, description: str = "", audio_pa
 
     step = 5
     try:
-        print("Step 5/5 - Dispatch Agent searching for authorities and sending report...")
-        dispatch_data = dispatch_report(report, location)
+        if authority_hint and authority_hint.get("authority_name"):
+            print("Step 5/5 - Dispatch Agent using verified authority route...")
+            dispatch_data = _dispatch_from_authority_hint(authority_hint, report, location)
+        else:
+            print("Step 5/5 - Dispatch Agent searching for authorities and sending report...")
+            dispatch_data = dispatch_report(report, location)
         report["dispatch"] = dispatch_data
         report = _apply_dispatch_authority(report, dispatch_data, location)
         print(f"Step 5/5 - Dispatched to: {dispatch_data['authority_name']}")

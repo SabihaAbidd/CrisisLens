@@ -561,7 +561,8 @@ def _resolve_authority(location: str, incident_type: str, signal_text: str) -> d
             "phone": route.get("primary_phone") or route.get("emergency_contact", "1122"),
             "city": route["_debug"]["location_context"].get("city", "unknown"),
             "hazard_class": route["_debug"]["hazard_context"].get("issue_type", "unknown"),
-            "is_generic": route.get("routing_confidence", 100.0) < 60.0
+            "is_generic": route.get("routing_confidence", 100.0) < 60.0,
+            "routing_result": route,
         }
     except Exception as e:
         print(f"[Resolve Authority Fallback] Error: {e}")
@@ -572,4 +573,3 @@ def _resolve_authority(location: str, incident_type: str, signal_text: str) -> d
             "hazard_class": incident_type,
             "is_generic": True
         }
-

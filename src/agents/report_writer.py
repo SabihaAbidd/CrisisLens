@@ -2,6 +2,41 @@ import json
 from crewai import Agent, Task, Crew
 from src.config import llm
 
+
+def _fallback_report(scene_data: dict, risk_data: dict, advice_data: dict, location: str) -> dict:
+    incident_type = scene_data.get("incident_type", "Public Hazard")
+    risk_level = risk_data.get("risk_level", "High")
+    authority = advice_data.get("authority_to_contact", "Relevant civic authority")
+    summary = (
+        f"A {incident_type.lower()} has been reported at {location}. "
+        f"The issue is assessed as {risk_level.lower()} risk because it may endanger nearby citizens and traffic. "
+        f"Immediate inspection, barricading, and repair are requested from {authority}."
+    )
+    return {
+        "report_title": f"{risk_level} - {incident_type} at {location}",
+        "report_summary": summary,
+        "public_alert_english": (
+            f"{incident_type} reported at {location}. Risk level is {risk_level}. "
+            "Avoid the area and warn others nearby."
+        ),
+        "public_alert_urdu": "عوامی خطرہ رپورٹ ہوا ہے۔ جگہ سے دور رہیں اور متعلقہ ادارے کو فوری اطلاع دیں۔",
+        "full_report": {
+            "incident_type": incident_type,
+            "risk_level": risk_level,
+            "location": location,
+            "scene_description": scene_data.get("scene_description", ""),
+            "who_is_at_risk": risk_data.get("who_is_at_risk", []),
+            "is_life_threatening": risk_data.get("is_life_threatening", False),
+            "urgency": risk_data.get("urgency", "Immediate"),
+            "immediate_steps": advice_data.get("immediate_steps", []),
+            "do_not_do": advice_data.get("do_not_do", []),
+            "authority_to_contact": authority,
+            "authority_number": advice_data.get("authority_number", "Local helpline"),
+            "confidence": scene_data.get("confidence", 70),
+        },
+    }
+
+
 def write_report(scene_data: dict, risk_data: dict, advice_data: dict, location: str) -> dict:
     """
     Takes scene data, risk data, and safety advice, and writes a polished
@@ -70,7 +105,11 @@ def write_report(scene_data: dict, risk_data: dict, advice_data: dict, location:
 
     # 3. Run crew
     crew = Crew(agents=[writer], tasks=[task], verbose=True)
-    result = crew.kickoff()
+    try:
+        result = crew.kickoff()
+    except Exception as e:
+        print(f"[Agent 4/4] Report writer failed, using fallback: {e}")
+        return _fallback_report(scene_data, risk_data, advice_data, location)
 
     # Strip markdown, parse JSON, and return dict
     raw = result.raw.strip()
@@ -79,7 +118,8 @@ def write_report(scene_data: dict, risk_data: dict, advice_data: dict, location:
     try:
         data = json.loads(raw_clean)
     except Exception as e:
-        raise ValueError(f"Report Writer failed to parse. Raw: {result.raw}") from e
+        print(f"[Agent 4/4] Report writer parse failed, using fallback: {e}")
+        return _fallback_report(scene_data, risk_data, advice_data, location)
 
     # 4. Print completion
     print(f"[Agent 4/4] Report complete: {data['report_title']}")

@@ -2,6 +2,26 @@ import json
 from crewai import Agent, Task, Crew
 from src.config import llm
 
+
+def _fallback_advice(scene_data: dict, risk_data: dict) -> dict:
+    incident_type = scene_data.get("incident_type", "public hazard")
+    return {
+        "immediate_steps": [
+            "Keep people away from the affected area.",
+            "Warn pedestrians, motorcyclists, and drivers before they reach the hazard.",
+            "Place a visible marker nearby only if it is safe to do so.",
+            "Share the exact location with the responsible civic authority.",
+        ],
+        "do_not_do": [
+            f"Do not attempt to repair the {incident_type.lower()} yourself.",
+            "Do not let children or motorcycles near the hazard.",
+        ],
+        "authority_to_contact": "Relevant civic authority",
+        "authority_number": "Local helpline",
+        "bystander_role": "Stay at a safe distance and warn others until the area is secured.",
+    }
+
+
 def get_advice(scene_data: dict, risk_data: dict) -> dict:
     """
     Takes scene data and risk data and produces practical safety advice
@@ -60,7 +80,11 @@ def get_advice(scene_data: dict, risk_data: dict) -> dict:
 
     # 3. Run crew
     crew = Crew(agents=[advisor], tasks=[task], verbose=True)
-    result = crew.kickoff()
+    try:
+        result = crew.kickoff()
+    except Exception as e:
+        print(f"[Agent 3/4] Safety advisor failed, using fallback: {e}")
+        return _fallback_advice(scene_data, risk_data)
 
     # Strip markdown, parse JSON, and return dict
     raw = result.raw.strip()
@@ -69,7 +93,8 @@ def get_advice(scene_data: dict, risk_data: dict) -> dict:
     try:
         data = json.loads(raw_clean)
     except Exception as e:
-        raise ValueError(f"Safety Advisor failed to parse. Raw: {result.raw}") from e
+        print(f"[Agent 3/4] Safety advisor parse failed, using fallback: {e}")
+        return _fallback_advice(scene_data, risk_data)
 
     # 4. Print confirmation
     print(f"[Agent 3/4] Safety advice ready. Contact: {data['authority_to_contact']}")

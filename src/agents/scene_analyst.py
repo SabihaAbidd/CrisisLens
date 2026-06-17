@@ -3,6 +3,31 @@ from PIL import Image
 from crewai import Agent, Task, Crew
 from src.config import gemini_model, llm
 
+
+def _fallback_scene(location: str, description: str = "") -> dict:
+    signal = f"{location} {description}".lower()
+    incident_type = "Public hazard"
+    hazard_objects = ["reported hazard"]
+    if "manhole" in signal or "open hole" in signal or "hole" in signal:
+        incident_type = "Open Manhole"
+        hazard_objects = ["open manhole", "road opening", "unprotected perimeter"]
+    elif "sewage" in signal or "drain" in signal or "wastewater" in signal:
+        incident_type = "Sewage Overflow"
+        hazard_objects = ["sewage overflow", "contaminated water"]
+    elif "wire" in signal or "electric" in signal:
+        incident_type = "Unsafe Electric Wire"
+        hazard_objects = ["electric wire", "public safety hazard"]
+
+    return {
+        "incident_type": incident_type,
+        "scene_description": description or f"Citizen reported a {incident_type.lower()} at {location}.",
+        "hazard_objects": hazard_objects,
+        "people_visible": "Unknown",
+        "environment": "Outdoor",
+        "confidence": 70,
+    }
+
+
 def analyze_scene(image_path: str, location: str, description: str = "") -> dict:
     """
     Analyzes an emergency scene image and location using Gemini multimodal
@@ -29,7 +54,11 @@ object with no markdown and no explanation:
   "confidence": integer from 0 to 100
 }}
 """
-    response = gemini_model.generate_content([prompt, img])
+    try:
+        response = gemini_model.generate_content([prompt, img])
+    except Exception as e:
+        print(f"[Agent 1/4] Gemini scene analysis failed, using fallback: {e}")
+        return _fallback_scene(location, description)
 
     # 3. Strip any accidental markdown from response.text
     raw = response.text.strip()
@@ -78,7 +107,11 @@ object with no markdown and no explanation:
     )
     
     crew = Crew(agents=[validator], tasks=[validation_task], verbose=True)
-    result = crew.kickoff()
+    try:
+        result = crew.kickoff()
+    except Exception as e:
+        print(f"[Agent 1/4] Scene validation failed, using initial scene data: {e}")
+        return scene_data
     
     validated_raw = result.raw.replace("```json", "").replace("```", "").strip()
     try:

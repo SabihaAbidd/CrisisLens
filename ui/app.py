@@ -4,17 +4,20 @@ import sys
 import tempfile
 import urllib.parse
 from datetime import datetime
+from html import escape
 
 import streamlit as st
 import streamlit.components.v1 as components
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
 
 # Ensure project root is in sys.path for Streamlit execution
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
-
-from src.pipeline import run_pipeline
-
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ARTIFACTS_DIR = os.path.join(APP_DIR, "artifacts")
@@ -22,87 +25,10 @@ SUBMISSIONS_PATH = os.path.join(ARTIFACTS_DIR, "submitted_reports.json")
 DEMO_LOCATION = "Gulberg Main Boulevard, Lahore"
 DEMO_IMAGE_PATH = "demo_assets/test_scene.jpg"
 DEMO_DESCRIPTION = "There is a severe sewage spill and a massive open hole on the road."
-
-NEARBY_REPORTS_MAP_HTML = """
-<style>
-  body { margin: 0; background: transparent; font-family: Outfit, Arial, sans-serif; }
-  .map-card {
-    position: relative;
-    height: 240px;
-    border-radius: 14px;
-    overflow: hidden;
-    border: 1px solid #D1D5DB;
-    background: linear-gradient(180deg, #F9FAFB 0%, #EEF6F3 100%);
-  }
-  .map-grid {
-    position: absolute;
-    inset: 0;
-    background-image:
-      linear-gradient(rgba(203, 213, 225, 0.7) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(203, 213, 225, 0.7) 1px, transparent 1px);
-    background-size: 40px 40px;
-  }
-  .map-road {
-    position: absolute;
-    background: rgba(255, 255, 255, 0.82);
-    border: 1px solid rgba(203, 213, 225, 0.95);
-  }
-  .road-h { left: 18px; right: 18px; top: 108px; height: 24px; }
-  .road-v { top: 18px; bottom: 18px; left: 156px; width: 22px; }
-  .road-d { width: 180px; height: 20px; right: 36px; top: 52px; transform: rotate(25deg); transform-origin: center; }
-  .map-label {
-    position: absolute;
-    font-size: 11px;
-    font-weight: 700;
-    color: #475569;
-    background: rgba(255, 255, 255, 0.8);
-    padding: 2px 6px;
-    border-radius: 999px;
-  }
-  .map-marker {
-    position: absolute;
-    width: 14px;
-    height: 14px;
-    border-radius: 999px;
-    border: 3px solid #ffffff;
-    box-shadow: 0 4px 10px rgba(15, 23, 42, 0.18);
-  }
-  .map-marker span {
-    position: absolute;
-    top: -28px;
-    left: 12px;
-    white-space: nowrap;
-    font-size: 10px;
-    font-weight: 700;
-    color: #111827;
-    background: rgba(255, 255, 255, 0.92);
-    padding: 3px 7px;
-    border-radius: 999px;
-  }
-  .map-marker-blue { background: #3B82F6; box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.18); }
-  .map-marker-red { background: #DC2626; }
-  .map-marker-amber { background: #D97706; }
-  .map-marker-green { background: #059669; }
-</style>
-<div class="map-card">
-  <div class="map-grid"></div>
-  <div class="map-road road-h"></div>
-  <div class="map-road road-v"></div>
-  <div class="map-road road-d"></div>
-
-  <span class="map-label" style="top:18px; left:28px;">DHA</span>
-  <span class="map-label" style="top:76px; left:162px;">Gulberg</span>
-  <span class="map-label" style="top:150px; left:44px;">Faisal Town</span>
-  <span class="map-label" style="top:46px; left:276px;">Johar Town</span>
-  <span class="map-label" style="top:188px; left:230px;">Model Town</span>
-
-  <div class="map-marker map-marker-blue" style="top:104px; left:126px;"><span>User</span></div>
-  <div class="map-marker map-marker-red" style="top:42px; left:66px;"><span>Open manhole</span></div>
-  <div class="map-marker map-marker-amber" style="top:126px; left:222px;"><span>Sewage spill</span></div>
-  <div class="map-marker map-marker-green" style="top:182px; left:84px;"><span>Resolved light</span></div>
-</div>
-"""
-
+API_KEY_SETUP_MESSAGE = (
+    "GOOGLE_API_KEY is missing. Create a .env file in the CrisisLens folder "
+    "with GOOGLE_API_KEY=your_key_here, then restart Streamlit."
+)
 
 st.set_page_config(page_title="CrisisLens AI", page_icon="◉", layout="wide")
 
@@ -122,6 +48,35 @@ def init_session_state():
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+
+def load_environment():
+    if load_dotenv:
+        load_dotenv(os.path.join(APP_DIR, ".env"), override=False)
+
+
+def get_google_api_key():
+    load_environment()
+    api_key = os.getenv("GOOGLE_API_KEY", "").strip()
+    if not api_key or api_key == "your_key_here":
+        return None
+    return api_key
+
+
+def is_ai_configured():
+    return get_google_api_key() is not None
+
+
+def run_ai_pipeline(**kwargs):
+    if not is_ai_configured():
+        raise RuntimeError(API_KEY_SETUP_MESSAGE)
+
+    try:
+        from src.pipeline import run_pipeline
+    except EnvironmentError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+    return run_pipeline(**kwargs)
 
 
 def load_css():
@@ -454,6 +409,195 @@ def save_submission(report):
     return payload["id"]
 
 
+def load_submissions():
+    if not os.path.exists(SUBMISSIONS_PATH):
+        return []
+    try:
+        with open(SUBMISSIONS_PATH, "r", encoding="utf-8") as file:
+            submissions = json.load(file)
+    except Exception:
+        return []
+    if not isinstance(submissions, list):
+        return []
+    return list(reversed(submissions))
+
+
+def format_submission_time(timestamp):
+    if not timestamp:
+        return "Just now"
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        return parsed.strftime("%Y-%m-%d %H:%M UTC")
+    except ValueError:
+        return timestamp
+
+
+def risk_chip_class(risk):
+    risk_value = str(risk or "").lower()
+    if risk_value in {"high", "critical"}:
+        return "chip-high"
+    if risk_value == "medium":
+        return "chip-medium"
+    if risk_value == "low":
+        return "chip-low"
+    return "chip-neutral"
+
+
+def map_marker_class(risk):
+    risk_value = str(risk or "").lower()
+    if risk_value in {"high", "critical"}:
+        return "map-marker-red"
+    if risk_value == "medium":
+        return "map-marker-amber"
+    if risk_value == "low":
+        return "map-marker-green"
+    return "map-marker-blue"
+
+
+def truncate_text(value, max_length=28):
+    text = str(value or "").strip()
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 1].rstrip() + "…"
+
+
+def build_recent_report_rows():
+    rows = []
+    for submission in load_submissions():
+        report = submission.get("report", {}) if isinstance(submission, dict) else {}
+        full = report.get("full_report", {}) if isinstance(report, dict) else {}
+        incident_type = full.get("incident_type") or report.get("report_title") or "Submitted Report"
+        location = full.get("location") or "Unknown location"
+        risk = full.get("risk_level") or "Submitted"
+        rows.append(
+            {
+                "hazard": str(incident_type),
+                "location": str(location),
+                "risk": str(risk),
+                "status": "Submitted",
+                "status_class": "chip-success",
+                "risk_class": risk_chip_class(risk),
+                "map_marker_class": map_marker_class(risk),
+                "time": format_submission_time(submission.get("submitted_at_utc")),
+            }
+        )
+    return rows[:8]
+
+
+def build_nearby_reports_map_html(rows):
+    positions = [
+        (126, 104),
+        (66, 42),
+        (222, 126),
+        (84, 182),
+        (276, 72),
+        (306, 176),
+        (168, 162),
+        (338, 114),
+    ]
+    label_positions = [(28, 18), (162, 76), (44, 150), (230, 188), (276, 46)]
+    labels = []
+    for row in rows[:5]:
+        location = truncate_text(row["location"], 18)
+        if location and location not in labels:
+            labels.append(location)
+
+    label_html = "".join(
+        f'<span class="map-label" style="top:{top}px; left:{left}px;">{escape(label)}</span>'
+        for label, (left, top) in zip(labels, label_positions)
+    )
+    marker_html = "".join(
+        f'<div class="map-marker {row["map_marker_class"]}" style="top:{top}px; left:{left}px;">'
+        f'<span>{escape(truncate_text(row["hazard"], 18))}</span></div>'
+        for row, (left, top) in zip(rows[:8], positions)
+    )
+
+    if not rows:
+        marker_html = '<div class="map-empty">Submitted reports will appear here.</div>'
+
+    return f"""<style>
+body {{ margin: 0; background: transparent; font-family: Outfit, Arial, sans-serif; }}
+.map-card {{
+  position: relative;
+  height: 240px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid #D1D5DB;
+  background: linear-gradient(180deg, #F9FAFB 0%, #EEF6F3 100%);
+}}
+.map-grid {{
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(203, 213, 225, 0.7) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(203, 213, 225, 0.7) 1px, transparent 1px);
+  background-size: 40px 40px;
+}}
+.map-road {{
+  position: absolute;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(203, 213, 225, 0.95);
+}}
+.road-h {{ left: 18px; right: 18px; top: 108px; height: 24px; }}
+.road-v {{ top: 18px; bottom: 18px; left: 156px; width: 22px; }}
+.road-d {{ width: 180px; height: 20px; right: 36px; top: 52px; transform: rotate(25deg); transform-origin: center; }}
+.map-label {{
+  position: absolute;
+  font-size: 11px;
+  font-weight: 700;
+  color: #475569;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 2px 6px;
+  border-radius: 999px;
+}}
+.map-marker {{
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 3px solid #ffffff;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.18);
+}}
+.map-marker span {{
+  position: absolute;
+  top: -28px;
+  left: 12px;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 700;
+  color: #111827;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 3px 7px;
+  border-radius: 999px;
+}}
+.map-marker-blue {{ background: #3B82F6; box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.18); }}
+.map-marker-red {{ background: #DC2626; box-shadow: 0 0 0 6px rgba(220, 38, 38, 0.14); }}
+.map-marker-amber {{ background: #D97706; box-shadow: 0 0 0 6px rgba(217, 119, 6, 0.14); }}
+.map-marker-green {{ background: #059669; box-shadow: 0 0 0 6px rgba(5, 150, 105, 0.14); }}
+.map-empty {{
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: #6B7280;
+  font-size: 13px;
+  font-weight: 650;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid #E5E7EB;
+  border-radius: 999px;
+  padding: 8px 12px;
+}}
+</style>
+<div class="map-card">
+  <div class="map-grid"></div>
+  <div class="map-road road-h"></div>
+  <div class="map-road road-v"></div>
+  <div class="map-road road-d"></div>
+  {label_html}
+  {marker_html}
+</div>"""
+
+
 def safe_remove_temp_file(path):
     if not path or not os.path.exists(path):
         return
@@ -539,11 +683,15 @@ def render_hero():
 
 def render_report_form():
     st.markdown("### New Hazard Report")
+    ai_ready = is_ai_configured()
 
-    if st.button("Run Demo Case", key="run_demo_case", use_container_width=True):
+    if not ai_ready:
+        st.warning(API_KEY_SETUP_MESSAGE)
+
+    if st.button("Run Demo Case", key="run_demo_case", width="stretch", disabled=not ai_ready):
         with st.spinner("Running demo analysis..."):
             try:
-                report = run_pipeline(
+                report = run_ai_pipeline(
                     image_path=DEMO_IMAGE_PATH,
                     location=DEMO_LOCATION,
                     description=DEMO_DESCRIPTION,
@@ -568,7 +716,7 @@ def render_report_form():
     )
 
     if uploaded_image is not None:
-        st.image(uploaded_image, use_container_width=True, caption="Scene Preview")
+        st.image(uploaded_image, width="stretch", caption="Scene Preview")
 
     test_image_path = st.text_input(
         "Or enter local image path (for testing/automation)",
@@ -621,19 +769,27 @@ def render_report_form():
     else:
         st.session_state.report_is_stale = False
 
-    button_disabled = (uploaded_image is None and test_image_path.strip() == "") or location.strip() == ""
+    button_disabled = (
+        not ai_ready
+        or (uploaded_image is None and test_image_path.strip() == "")
+        or location.strip() == ""
+    )
 
-    if button_disabled:
+    if not ai_ready:
+        st.caption("Add a valid GOOGLE_API_KEY before running AI analysis.")
+    elif button_disabled:
         st.caption("Upload a photo or enter a test path and enter a location to continue")
 
     if st.button("Analyze with AI", disabled=button_disabled):
         image_path = None
+        image_is_temporary = False
         if uploaded_image is not None:
             image_bytes = uploaded_image.getvalue()
             with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_img:
                 tmp_img.write(image_bytes)
                 tmp_img.flush()
                 image_path = tmp_img.name
+                image_is_temporary = True
         else:
             image_path = test_image_path.strip()
 
@@ -655,7 +811,7 @@ def render_report_form():
 
         with st.spinner("Analyzing hazard with AI agents..."):
             try:
-                report = run_pipeline(
+                report = run_ai_pipeline(
                     image_path=image_path,
                     location=location,
                     description=pipeline_description,
@@ -679,7 +835,8 @@ def render_report_form():
             except Exception as exc:
                 st.session_state.error = str(exc)
             finally:
-                safe_remove_temp_file(image_path)
+                if image_is_temporary:
+                    safe_remove_temp_file(image_path)
                 safe_remove_temp_file(audio_path)
 
         st.rerun()
@@ -692,23 +849,38 @@ def render_report_form():
 
 def render_nearby_reports():
     st.markdown("### Nearby Reports")
-    components.html(NEARBY_REPORTS_MAP_HTML, height=245)
+    rows = build_recent_report_rows()
+    components.html(build_nearby_reports_map_html(rows), height=245)
 
-    st.markdown(
-        """
-        <div style="background-color:#FAFAFA; border:1px solid #E5E7EB; border-radius:12px; padding:16px; margin-top:16px;">
-            <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:6px;">
-                <span style="font-weight:700; font-size:15px; color:#111827;">Open Manhole</span>
-                <span class="chip chip-high" style="font-size:10px; padding:2px 8px;">High Risk</span>
+    if not rows:
+        st.markdown(
+            """
+            <div style="background-color:#FAFAFA; border:1px solid #E5E7EB; border-radius:12px; padding:16px; margin-top:16px;">
+                <div style="font-weight:700; font-size:15px; color:#111827; margin-bottom:6px;">No submitted reports yet</div>
+                <p style="color:#6B7280; font-size:13px; margin:0;">Submit a generated report and it will appear here automatically.</p>
             </div>
-            <p style="color:#4B5563; font-size:13px; margin-bottom:8px; font-weight:550;">📍 15th Lane, Phase 2, DHA Lahore</p>
-            <p style="color:#6B7280; font-size:12px; margin-bottom:12px;">Reported by 12 citizens nearby</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+            """,
+            unsafe_allow_html=True,
+        )
+        return
 
-    st.caption("Nearby reports are illustrative examples and do not overwrite your current draft.")
+    for row in rows[:3]:
+        risk_label = f"{escape(row['risk'])} Risk" if row["risk"] else "Submitted"
+        st.markdown(
+            f"""
+            <div style="background-color:#FAFAFA; border:1px solid #E5E7EB; border-radius:12px; padding:16px; margin-top:16px;">
+                <div style="display:flex; justify-content:space-between; align-items:start; gap:12px; margin-bottom:6px;">
+                    <span style="font-weight:700; font-size:15px; color:#111827;">{escape(row["hazard"])}</span>
+                    <span class="chip {row["risk_class"]}" style="font-size:10px; padding:2px 8px; white-space:nowrap;">{risk_label}</span>
+                </div>
+                <p style="color:#4B5563; font-size:13px; margin-bottom:8px; font-weight:550;">Location: {escape(row["location"])}</p>
+                <p style="color:#6B7280; font-size:12px; margin:0;">Submitted {escape(row["time"])}</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.caption("Showing reports saved from submitted CrisisLens complaints.")
 
 
 def render_agent_pipeline():
@@ -1006,52 +1178,49 @@ def render_dispatch_status(report):
 
 def render_recent_reports():
     st.markdown("### Recent Reports")
+    rows = build_recent_report_rows()
+    if not rows:
+        st.markdown(
+            """
+            <div style="background-color:white; border:1px solid #E5E7EB; border-radius:12px; padding:16px;">
+                <div style="font-weight:700; color:#111827; margin-bottom:4px;">No submitted reports yet</div>
+                <div style="color:#6B7280; font-size:13px;">Submitted reports will appear here automatically.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    table_rows = []
+    for row in rows:
+        table_rows.append(
+            f"<tr style='border-bottom:1px solid #F3F4F6;'>"
+            f"<td style='padding:10px; font-weight:600;'>{escape(row['hazard'])}</td>"
+            f"<td style='padding:10px; color:#4B5563;'>{escape(row['location'])}</td>"
+            f"<td style='padding:10px;'><span class='chip {row['risk_class']}' style='font-size:10px; padding:2px 8px;'>{escape(row['risk'])}</span></td>"
+            f"<td style='padding:10px;'><span class='chip {row['status_class']}' style='font-size:10px; padding:2px 8px;'>{escape(row['status'])}</span></td>"
+            f"<td style='padding:10px; color:#6B7280;'>{escape(row['time'])}</td>"
+            "</tr>"
+        )
+    rows_html = "\n".join(table_rows)
+
     st.markdown(
-        """
-        <div style="background-color:white; border:1px solid #E5E7EB; border-radius:12px; padding:12px; overflow-x:auto;">
-            <table style="width:100%; border-collapse:collapse; font-size:13px;">
-                <thead>
-                    <tr style="border-bottom:2px solid #F3F4F6; text-align:left;">
-                        <th style="padding:10px; color:#4B5563; font-weight:600;">Hazard</th>
-                        <th style="padding:10px; color:#4B5563; font-weight:600;">Location</th>
-                        <th style="padding:10px; color:#4B5563; font-weight:600;">Risk</th>
-                        <th style="padding:10px; color:#4B5563; font-weight:600;">Status</th>
-                        <th style="padding:10px; color:#4B5563; font-weight:600;">Time</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr style="border-bottom:1px solid #F3F4F6;">
-                        <td style="padding:10px; font-weight:600;">Open Manhole</td>
-                        <td style="padding:10px; color:#4B5563;">DHA Lahore</td>
-                        <td style="padding:10px;"><span class="chip chip-high" style="font-size:10px; padding:2px 8px;">High</span></td>
-                        <td style="padding:10px;"><span class="chip chip-neutral" style="font-size:10px; padding:2px 8px;">Under Review</span></td>
-                        <td style="padding:10px; color:#6B7280;">10 min ago</td>
-                    </tr>
-                    <tr style="border-bottom:1px solid #F3F4F6;">
-                        <td style="padding:10px; font-weight:600;">Sewage Overflow</td>
-                        <td style="padding:10px; color:#4B5563;">Johar Town</td>
-                        <td style="padding:10px;"><span class="chip chip-medium" style="font-size:10px; padding:2px 8px;">Medium</span></td>
-                        <td style="padding:10px;"><span class="chip chip-medium" style="font-size:10px; padding:2px 8px;">Escalated</span></td>
-                        <td style="padding:10px; color:#6B7280;">1 hr ago</td>
-                    </tr>
-                    <tr style="border-bottom:1px solid #F3F4F6;">
-                        <td style="padding:10px; font-weight:600;">Broken Streetlight</td>
-                        <td style="padding:10px; color:#4B5563;">Gulberg</td>
-                        <td style="padding:10px;"><span class="chip chip-low" style="font-size:10px; padding:2px 8px;">Low</span></td>
-                        <td style="padding:10px;"><span class="chip chip-success" style="font-size:10px; padding:2px 8px;">Submitted</span></td>
-                        <td style="padding:10px; color:#6B7280;">25 min ago</td>
-                    </tr>
-                    <tr style="border-bottom:1px solid #F3F4F6;">
-                        <td style="padding:10px; font-weight:600;">Unsafe Electric Wire</td>
-                        <td style="padding:10px; color:#4B5563;">Faisal Town</td>
-                        <td style="padding:10px;"><span class="chip chip-high" style="font-size:10px; padding:2px 8px;">High</span></td>
-                        <td style="padding:10px;"><span class="chip chip-success" style="font-size:10px; padding:2px 8px;">Routed</span></td>
-                        <td style="padding:10px; color:#6B7280;">40 min ago</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-        """,
+        f"""<div style="background-color:white; border:1px solid #E5E7EB; border-radius:12px; padding:12px; overflow-x:auto;">
+<table style="width:100%; border-collapse:collapse; font-size:13px;">
+<thead>
+<tr style="border-bottom:2px solid #F3F4F6; text-align:left;">
+<th style="padding:10px; color:#4B5563; font-weight:600;">Hazard</th>
+<th style="padding:10px; color:#4B5563; font-weight:600;">Location</th>
+<th style="padding:10px; color:#4B5563; font-weight:600;">Risk</th>
+<th style="padding:10px; color:#4B5563; font-weight:600;">Status</th>
+<th style="padding:10px; color:#4B5563; font-weight:600;">Time</th>
+</tr>
+</thead>
+<tbody>
+{rows_html}
+</tbody>
+</table>
+</div>""",
         unsafe_allow_html=True,
     )
 
@@ -1100,7 +1269,7 @@ if show_report:
     if routing_result:
         st.expander("Authority Discovery Debug").json(routing_result)
 
-    if st.button("Start Over - Report a New Incident", key="reset_app_state", use_container_width=True):
+    if st.button("Start Over - Report a New Incident", key="reset_app_state", width="stretch"):
         for key in [
             "report",
             "error",
