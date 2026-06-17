@@ -1,5 +1,7 @@
 streamlit
 crewai
+crewai-tools
+serper-python
 langchain-google-genai
 google-generativeai
 python-dotenv

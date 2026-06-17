@@ -12,13 +12,13 @@ if not GOOGLE_API_KEY or GOOGLE_API_KEY.strip() == "" or GOOGLE_API_KEY == "your
         "Get a free key at aistudio.google.com"
     )
 
-from langchain_google_genai import ChatGoogleGenerativeAI
-llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-pro",
-    google_api_key=GOOGLE_API_KEY,
+from crewai import LLM
+llm = LLM(
+    model="gemini/gemini-3.1-flash-lite",
+    api_key=GOOGLE_API_KEY,
     temperature=0.3
 )
 
 import google.generativeai as genai
 genai.configure(api_key=GOOGLE_API_KEY)
-gemini_model = genai.GenerativeModel("gemini-1.5-pro")
+gemini_model = genai.GenerativeModel("gemini-3.1-flash-lite")
