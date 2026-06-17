@@ -8,10 +8,11 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from src.config import llm
+from src.secrets import get_secret
 
 
 def _serper_search(query: str) -> dict:
-    api_key = os.getenv("SERPER_API_KEY")
+    api_key = get_secret("SERPER_API_KEY")
     if not api_key:
         return {"ok": False, "error": "SERPER_API_KEY missing", "results": []}
 
@@ -523,8 +524,8 @@ def dispatch_report(report: dict, location: str) -> dict:
     
     # Try sending email
     email_sent = False
-    sender = os.getenv("REPORT_EMAIL")
-    password = os.getenv("REPORT_EMAIL_PASS")
+    sender = get_secret("REPORT_EMAIL")
+    password = get_secret("REPORT_EMAIL_PASS")
     authority_email = dispatch_data.get("authority_email")
     if authority_email and sender and password:
         try:

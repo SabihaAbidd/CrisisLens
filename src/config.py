@@ -1,15 +1,16 @@
 import os
 from dotenv import load_dotenv
+from src.secrets import get_secret
 
 # Load GOOGLE_API_KEY from .env using python-dotenv
 load_dotenv()
 
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_API_KEY = get_secret("GOOGLE_API_KEY")
 
 if not GOOGLE_API_KEY or GOOGLE_API_KEY.strip() == "" or GOOGLE_API_KEY == "your_key_here":
     raise EnvironmentError(
-        "GOOGLE_API_KEY is missing. Add it to your .env file.\n"
-        "Get a free key at aistudio.google.com"
+        'GOOGLE_API_KEY is missing. In Streamlit Cloud secrets, add GOOGLE_API_KEY = "your_key_here".\n'
+        "For local runs, add GOOGLE_API_KEY=your_key_here to .env."
     )
 
 from crewai import LLM

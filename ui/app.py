@@ -26,8 +26,8 @@ DEMO_LOCATION = "Gulberg Main Boulevard, Lahore"
 DEMO_IMAGE_PATH = "demo_assets/test_scene.jpg"
 DEMO_DESCRIPTION = "There is a severe sewage spill and a massive open hole on the road."
 API_KEY_SETUP_MESSAGE = (
-    "GOOGLE_API_KEY is missing. Create a .env file in the CrisisLens folder "
-    "with GOOGLE_API_KEY=your_key_here, then restart Streamlit."
+    'GOOGLE_API_KEY is missing. In Streamlit Cloud secrets, add GOOGLE_API_KEY = "your_key_here". '
+    "For local runs, add GOOGLE_API_KEY=your_key_here to .env."
 )
 
 st.set_page_config(page_title="CrisisLens AI", page_icon="◉", layout="wide")
@@ -57,7 +57,9 @@ def load_environment():
 
 def get_google_api_key():
     load_environment()
-    api_key = os.getenv("GOOGLE_API_KEY", "").strip()
+    from src.secrets import get_secret
+
+    api_key = (get_secret("GOOGLE_API_KEY", "") or "").strip()
     if not api_key or api_key == "your_key_here":
         return None
     return api_key
