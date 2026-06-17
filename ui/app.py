@@ -26,7 +26,7 @@ DEMO_LOCATION = "Gulberg Main Boulevard, Lahore"
 DEMO_IMAGE_PATH = "demo_assets/test_scene.jpg"
 DEMO_DESCRIPTION = "There is a severe sewage spill and a massive open hole on the road."
 API_KEY_SETUP_MESSAGE = (
-    'GOOGLE_API_KEY is missing. In Streamlit Cloud secrets, add GOOGLE_API_KEY = "your_key_here". '
+    'GOOGLE_API_KEY is missing. In this Streamlit app, open Settings > Secrets and add GOOGLE_API_KEY = "your_key_here". '
     "For local runs, add GOOGLE_API_KEY=your_key_here to .env."
 )
 
